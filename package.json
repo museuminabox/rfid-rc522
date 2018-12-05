@@ -1,0 +1,41 @@
+{
+  "author": {
+    "name": "Adrian McEwen",
+    "email": "adrian@museuminabox.org"
+  },
+  "name": "rfid-rc522",
+  "description": "NodeJS module to interface to a MFRC522 SPI RFID reader on a Raspberry Pi",
+  "keywords": [
+    "rfid",
+    "rc522"
+  ],
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/museuminabox/rfid-rc522.git"
+  },
+  "scripts": {
+    "install": "(node-gyp rebuild) || (exit 0)",
+    "preinstall": "(node-gyp configure) || (exit 0)",
+    "clean": "((node-gyp clean) && (rm -rf node_modules)) || (exit 0)",
+    "build-debug": "(node-gyp configure --debug && node-gyp rebuild --debug) || (exit 0)"
+  },
+  "main": "./main",
+  "engines": {
+    "node": "0.12.9"
+  },
+  "dependencies": {},
+  "optionalDependencies": {},
+  "bugs": {
+    "url": "https://github.com/museuminabox/rfid-rc522/issues"
+  },
+  "homepage": "https://github.com/museuminabox/rfid-rc522#readme",
+  "directories": {},
+  "maintainers": [
+    {
+      "name": "Adrian McEwen",
+      "email": "adrian@museuminabox.org"
+    }
+  ],
+  "readme": "ERROR: No README data found!"
+}

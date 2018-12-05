@@ -92,6 +92,8 @@ napi_value checkForTag(napi_env env, napi_callback_info args) {
     uint8_t noTagFoundCount = 0;
     char rfidChipSerialNumber[23];
     char rfidChipSerialNumberRecentlyDetected[23];
+    napi_value ret;
+    napi_status err;
 
     // The status that no tag is found is sometimes set even when a tag is within reach of the tag reader
     // to prevent that the reset is performed the no tag event has to take place multiple times (ger: entrprellen)
@@ -105,12 +107,18 @@ napi_value checkForTag(napi_env env, napi_callback_info args) {
     }
 
     if (statusRfidReader == TAG_OK || statusRfidReader == TAG_COLLISION) {
-
-        if (select_tag_sn(serialNumber, &serialNumberLength) != TAG_OK) {
+        
+        uint8_t sak;
+	    statusRfidReader = select_tag_sn(serialNumber, &serialNumberLength, &sak);
+        if (statusRfidReader != TAG_OK) {
             // Return error
-		    // FIXME We should return the error code really
-            napi_throw_error(env, "General error", "Error selecting tag");
-            return nullptr;
+            err = napi_create_int32(env, statusRfidReader, &ret);
+            if (err != napi_ok) {
+                // Couldn't create return value...
+                napi_throw_error(env, "General error", "Failed to create error return");
+                return nullptr;
+            }
+            return ret;
         } else {
             // Convert serial number to a string
             p = rfidChipSerialNumber;
@@ -120,14 +128,12 @@ napi_value checkForTag(napi_env env, napi_callback_info args) {
             }
 
             // Convert string to a Javascript string to return
-            napi_value ret;
-            napi_status err;
             err = napi_create_string_latin1(env, rfidChipSerialNumber, strlen(rfidChipSerialNumber), &ret);
             if (err == napi_ok) {
                 return ret;
             } else {
                 // Error
-	            // FIXME We should return the error code really
+            	// FIXME We should return the error code really
                 napi_throw_error(env, "General error", "Error creating string");
                 return nullptr;
             }
@@ -138,8 +144,13 @@ napi_value checkForTag(napi_env env, napi_callback_info args) {
     } else {
         // Some sort of error
 	    // FIXME We should return the error code really
-        napi_throw_error(env, "General error", "Error received from RFID reader");
-        return nullptr;
+        err = napi_create_int32(env, statusRfidReader, &ret);
+        if (err != napi_ok) {
+            // Couldn't create return value...
+            napi_throw_error(env, "General error", "Failed to create error return");
+            return nullptr;
+        }
+        return ret;
     }
 }
 
@@ -174,16 +185,52 @@ napi_value readPage(napi_env env, napi_callback_info args) {
     }
 #endif
 
-    // Need to actually read in the given page...
-    // for now, return the number given in a string
-    // Set the return value (using the passed in
-    // FunctionCallbackInfo<Value>&)
-    napi_value ret;
-    status = napi_create_int32(env, 1234, &ret);
+    // Which page have we been asked for
+    int32_t pageNumber;
+    status = napi_get_value_int32(env, argv[0], &pageNumber);
     if (status != napi_ok) {
-        // Couldn't create return value...
-        napi_throw_error(env, "General error", "Failed to create return value");
+        napi_throw_error(env, "General error", "Failed to read page number");
         return nullptr;
+    }
+
+    // Fetch it
+    uint8_t buf[16]; // We only want 4 bytes of this, but...
+    printf("Reading page %d\n", pageNumber);
+    char err = TAG_ERR;
+    int tries = 0;
+    // FIXME We try this up to 8 times to try to make it more reliable, but
+    // FIXME it doesn't seem to make much difference, still fails with err == 3 too often
+    while (tries++ < 8 && err != TAG_OK) {
+        printf(".");
+        err = PcdRead(pageNumber, buf);
+        if (err != TAG_OK) {
+            usleep(200000);
+        }
+    }
+    printf("err: %d\n", err);
+    for (int i =0; i < 16; i++) {
+        printf("%02x ", buf[i]);
+    }
+    printf("\n");
+
+    napi_value ret;
+    void* ret_data;
+    if (err == TAG_OK) {
+        // We've got valid data, return the first 4 bytes
+        status = napi_create_buffer_copy(env, 4, buf, &ret_data, &ret);
+        if (status != napi_ok) {
+            // Couldn't create return value...
+            napi_throw_error(env, "General error", "Failed to create return buffer");
+            return nullptr;
+        }
+    } else {
+        // Return the error
+        status = napi_create_int32(env, err, &ret);
+        if (status != napi_ok) {
+            // Couldn't create return value...
+            napi_throw_error(env, "General error", "Failed to create return value");
+            return nullptr;
+        }
     }
 
     napi_value* ret_argv = &ret;
@@ -196,7 +243,7 @@ napi_value readPage(napi_env env, napi_callback_info args) {
         return nullptr;
     }
 
-    return nullptr; //napi_undefined;
+    return nullptr;
 }
 
 napi_value Init(napi_env env, napi_value exports) {
@@ -217,8 +264,6 @@ napi_value Init(napi_env env, napi_value exports) {
     status = napi_set_named_property(env, exports, "checkForTag", fn);
     if (status != napi_ok) return nullptr;
     return exports;
-    //NODE_SET_METHOD(module, "exports", RunCallback);
-    //NODE_SET_METHOD(module, "exports", readPage);
 }
 
 uint8_t initRfidReader(void) {

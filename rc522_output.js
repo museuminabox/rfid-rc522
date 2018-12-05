@@ -20,7 +20,7 @@ function checkForTag() {
 process.on('message', function(msg, data) {
 	console.log("c.l: {topic: "+msg.topic+", id: "+msg.id+", payload: "+msg.payload+"}");
 	if (msg.topic === 'readPage') {
-		rc522.readPage(1, function(retVal) {
+		rc522.readPage(msg.payload, function(retVal) {
 		console.log("c-addon ret: "+retVal);
 		process.send({ topic: "readPage", id: msg.id, payload: "AMc"}); });
 	}

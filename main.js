@@ -34,7 +34,7 @@ child.on('message', function(msg) {
                 // The ID and topic match, so this should be good to reply
                 console.log(outstandingRequests[msg.id].callback);
                 console.log(typeof outstandingRequests[msg.id].callback);
-                outstandingRequests[msg.id].callback(0, msg.payload);
+                outstandingRequests[msg.id].callback(msg.error, msg.payload);
                 console.log("callback called");
                 delete outstandingRequests[msg.id]
             } else {
@@ -51,7 +51,8 @@ child.on('close', function(code) {
     {
         // We aren't shutting down, the child process exited for some reason
         // Try kicking it off again
-        init();
+        //init();
+        console.log("would've called init");
     }
 });
 
@@ -75,6 +76,10 @@ function readPage(aPage, aCallback) {
     console.log(aCallback);
     console.log(typeof aCallback);
     sendMessage("readPage", aPage, aCallback);
+}
+
+function readFirstNDEFTextRecord(aCallback) {
+    sendMessage("readFirstNDEFTextRecord", 0, aCallback);
 }
 
 //
@@ -102,6 +107,7 @@ process.once("uncaughtException", function (error) {
     // If this was the last of the listeners, then shut down the child and rethrow.
     // Our assumption here is that any other code listening for an uncaught
     // exception is going to do the sensible thing and call process.exit().
+    console.log(error);
     if (process.listeners("uncaughtException").length === 0) {
         mainProcessShutdown = true;
         child.kill();
@@ -111,5 +117,6 @@ process.once("uncaughtException", function (error) {
 
 module.exports = exports = {
     readPage: readPage,
-    registerTagCallback: registerTagCallback
+    registerTagCallback: registerTagCallback,
+    readFirstNDEFTextRecord: readFirstNDEFTextRecord
 }

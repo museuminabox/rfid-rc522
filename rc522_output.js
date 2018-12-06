@@ -22,8 +22,13 @@ process.on('message', function(msg, data) {
 	if (msg.topic === 'readPage') {
 		rc522.readPage(msg.payload, function(retVal) {
 		console.log("c-addon ret: "+retVal);
-		process.send({ topic: "readPage", id: msg.id, payload: "AMc"}); });
-	}
+		process.send({ topic: "readPage", id: msg.id, error: 0, payload: "AMc"}); });
+	} else if (msg.topic === 'readFirstNDEFTextRecord') {
+        rc522.readFirstNDEFTextRecord(function(error, data) {
+            console.log("rfntr - "+error+","+data);
+            process.send({ topic: "readFirstNDEFTextRecord", id: msg.id, error: error, payload: data });
+        });
+    }
 });
 
 // Now start monitoring 

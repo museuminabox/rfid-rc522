@@ -7,6 +7,27 @@
 
 #define DEFAULT_SPI_SPEED 5000L
 
+#define DEBUG   0
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+// NDEF-related constants
+#define NDEF_RECORD_MESSAGE_BEGIN (1<<7)
+#define NDEF_RECORD_MESSAGE_END (1<<6)
+#define NDEF_RECORD_CHUNK_FLAG (1<<5)
+#define NDEF_RECORD_SHORT_RECORD (1<<4)
+#define NDEF_RECORD_ID_LENGTH_PRESENT (1<<3)
+#define NDEF_RECORD_TNF_MASK 0x07
+#define NDEF_TNF_EMPTY 0x00
+#define NDEF_TNF_NFC_WELL_KNOWN	0x01
+#define NDEF_TNF_MEDIA_TYPE_RFC2046 0x02
+#define NDEF_TNF_URI_RFC3986 0x03
+#define NDEF_TNF_NFC_EXTERNAL 0x04
+#define NDEF_TNF_NFC_EXTERNAL 0x04
+// NDEF well-known record types
+#define NDEF_RTD_TEXT 'T'
+#define NDEF_RTD_URI 'U'
+
 uint8_t initRfidReader(void);
 
 uint16_t CType = 0;
@@ -154,6 +175,240 @@ napi_value checkForTag(napi_env env, napi_callback_info args) {
     }
 }
 
+// Takes one argument, a callback function of the form "callback(error_value, data)"
+napi_value readFirstNDEFTextRecord(napi_env env, napi_callback_info args) {
+    // To store passed in arguments
+    size_t arg_count = 1;
+    napi_value argv[1];
+    // To store the returned arguments
+    napi_value ret_argv[2];
+    size_t ret_argc = 2;
+    void* ret_data;
+    napi_value thisArg = NULL;
+    void* data = NULL;
+    napi_status status = napi_ok;
+
+    // Get the arguments info from the caller
+    status = napi_get_cb_info(env, args, &arg_count, argv, &thisArg, &data);
+    if (status != napi_ok) {
+        // Couldn't get info...
+        napi_throw_error(env, "General error", "Failed to retrieve NAPI arguments");
+        return nullptr;
+    }
+
+    // Check the number of arguments passed.
+    if (arg_count != 1) {
+        // Throw an Error that is passed back to JavaScript
+        napi_throw_type_error(env, "Invalid", "Wrong number of arguments");
+        return nullptr;
+    }
+
+    // Check the argument types
+    // FIXME We should use napi_typeof to check this and argv[1]
+#if 0
+    if (!argv[0]->IsFunction()) {
+        napi_throw_type_error(env, "Number expected", "Wrong arguments");
+        return nullptr;
+    }
+#endif
+
+    // We're assuming the caller has made sure there's a tag present
+
+    const int kContentsBufferLen = 2048;
+    uint8_t gContentsBuffer[kContentsBufferLen];
+    int page = 4; // skip the first four pages as they hold general info on the tag
+    char err = TAG_OK;
+    int contentIdx = 0; // where in the content buffer we're up to
+    while ((contentIdx < kContentsBufferLen) && (err == TAG_OK))
+    {
+        err = PcdRead(page, &gContentsBuffer[contentIdx]);
+        if (err == TAG_OK) {
+            contentIdx += 16;
+            page+=4; // We can read in four pages at a time
+        }
+    }
+#if DEBUG
+    printf("Read in %d bytes\n", contentIdx);
+    int i;
+    for (i = 0; i < contentIdx; i++)
+    {
+        printf("%02x ", gContentsBuffer[i]);
+        if (i % 16 == 15)
+        {
+            printf("\n");
+        }
+    }
+    printf("\n");
+#endif
+
+    // Parse the content to look for NDEF records
+    int idx = 0;
+    while (idx < contentIdx)
+    {
+        // Look for the initial TLV structure
+        uint8_t t = gContentsBuffer[idx++];
+        if (t != 0)
+        {
+            // It's not a NULL TLV
+#if DEBUG
+            printf("t: %02x\n", t);
+#endif
+            int l = gContentsBuffer[idx++];
+            idx = MIN(idx, contentIdx);
+            if (l == 0xff)
+            {
+                // 3-byte length format, so the next two bytes are the actual length
+                //l = gContentsBuffer[idx++] << 8 | gContentsBuffer[idx++];
+                l = gContentsBuffer[idx] << 8 | gContentsBuffer[idx+1];
+                idx += 2;
+                idx = MIN(idx, contentIdx);
+            }
+            uint8_t tnf_byte;
+            uint8_t typeLength =0;
+            uint32_t payloadLength =0;
+            uint8_t idLength =0;
+            int messageEnd = idx + l;
+            switch (t)
+            {
+            case 0x03:
+                // We've found an NDEF message
+                // Parse out each record in it
+#if DEBUG
+                printf("NDEF message found\n", t);
+                printf("idx: %d, messageEnd: %d, contentIdx: %d\n", idx, messageEnd, contentIdx);
+#endif
+                while ((idx < messageEnd) && (idx < contentIdx))
+                {
+                    tnf_byte = gContentsBuffer[idx++];
+                    idx = MIN(idx, contentIdx);
+                    typeLength = gContentsBuffer[idx++];
+                    idx = MIN(idx, contentIdx);
+                    if (tnf_byte & NDEF_RECORD_SHORT_RECORD)
+                    {
+                        payloadLength = gContentsBuffer[idx++];
+                    }
+                    else
+                    {
+                        payloadLength = (gContentsBuffer[idx] << 24) |
+                            (gContentsBuffer[idx+1] << 16) |
+                            (gContentsBuffer[idx+2] << 8) |
+                            (gContentsBuffer[idx+3]);
+                        idx +=4;
+                    }
+                    idx = MIN(idx, contentIdx);
+                    if (tnf_byte & NDEF_RECORD_ID_LENGTH_PRESENT) {
+                        idLength = gContentsBuffer[idx++];
+                        idx = MIN(idx, contentIdx);
+                    }
+  
+#if DEBUG
+                    printf("NDEF record: tnf_byte: 0x%02x, typeLength: %d, idLength: %d, payloadLength: %d, next byte: 0x%02x\n", tnf_byte, typeLength, idLength, payloadLength, gContentsBuffer[idx]);
+#endif
+                    // Let's see if it's a record we're interested in...
+                    if ( ((tnf_byte & NDEF_RECORD_TNF_MASK) == NDEF_TNF_NFC_WELL_KNOWN) && 
+                        (typeLength == 1) && (gContentsBuffer[idx] == NDEF_RTD_TEXT) )
+                    {
+                        // It's text!  Let's output it...
+                        idx += typeLength; // skip over the type
+                        // skip the language
+                        int langLength = gContentsBuffer[idx++];
+                        payloadLength -= langLength;
+                        idx += langLength;
+                        // Now we're ready to return it to the caller
+                        status = napi_create_int32(env, 0, &ret_argv[0]);
+                        if (status != napi_ok) {
+                            // Couldn't create return value...
+                            napi_throw_error(env, "General error", "Failed to create return value");
+                            return nullptr;
+                        }
+                        status = napi_create_buffer_copy(env, MIN(payloadLength, contentIdx-idx), &gContentsBuffer[idx], &ret_data, &ret_argv[1]);
+                        if (status != napi_ok) {
+                            // Couldn't create return value...
+                            napi_throw_error(env, "General error", "Failed to create return buffer");
+                            return nullptr;
+                        }
+                        napi_value callback_ret;
+                        status = napi_call_function(env, thisArg, argv[0], ret_argc, ret_argv, &callback_ret);
+                        if (status != napi_ok) {
+                            // Couldn't call the callback
+                            napi_throw_error(env, "General error", "Failed to call callback");
+                            return nullptr;
+                        }
+                        return nullptr;
+                    }
+                    else
+                    {
+                        // Skip this message
+#if DEBUG
+                        printf("Skipping (tnf_byte: %02x)\n", tnf_byte);
+                        printf("idx: %d messageEnd: %d typeLength: %d idLength: %d payloadLength: %d contentIdx: %d\n", idx, messageEnd, typeLength, idLength, payloadLength, contentIdx);
+#endif
+                        idx += typeLength+idLength+payloadLength;
+                        idx = MIN(idx, contentIdx);
+                    }
+  
+                    if (tnf_byte & NDEF_RECORD_MESSAGE_END)
+                    {
+                        break;
+                    }
+                }
+                break;
+            case 0xfe:
+                // Terminator TLV block, give up now although we didn't find anything
+                status = napi_create_int32(env, -1, &ret_argv[0]);
+                if (status != napi_ok) {
+                    // Couldn't create return value...
+                    napi_throw_error(env, "General error", "Failed to create return value");
+                    return nullptr;
+                }
+                status = napi_get_undefined(env, &ret_argv[1]);
+                if (status != napi_ok) {
+                    // Couldn't create return value...
+                    napi_throw_error(env, "General error", "Failed to create undefined return value");
+                    return nullptr;
+                }
+                napi_value callback_ret;
+                status = napi_call_function(env, thisArg, argv[0], ret_argc, ret_argv, &callback_ret);
+                if (status != napi_ok) {
+                    // Couldn't call the callback
+                    napi_throw_error(env, "General error", "Failed to call callback");
+                    return nullptr;
+                } 
+                return nullptr;
+                break;
+            default:
+                // Skip to the next TLV
+                idx += l;
+                break;
+            };
+        }
+    }
+
+    // If we get here we didn't find anything
+    status = napi_create_int32(env, -1, &ret_argv[0]);
+    if (status != napi_ok) {
+        // Couldn't create return value...
+        napi_throw_error(env, "General error", "Failed to create return value");
+        return nullptr;
+    }
+    status = napi_get_undefined(env, &ret_argv[1]);
+    if (status != napi_ok) {
+        // Couldn't create return value...
+        napi_throw_error(env, "General error", "Failed to create undefined return value");
+        return nullptr;
+    }
+    napi_value callback_ret;
+    status = napi_call_function(env, thisArg, argv[0], ret_argc, ret_argv, &callback_ret);
+    if (status != napi_ok) {
+        // Couldn't call the callback
+        napi_throw_error(env, "General error", "Failed to call callback");
+        return nullptr;
+    }
+
+    return nullptr;
+}
+
+
 napi_value readPage(napi_env env, napi_callback_info args) {
     size_t arg_count = 2;
     napi_value argv[2];
@@ -256,6 +511,12 @@ napi_value Init(napi_env env, napi_value exports) {
     if (status != napi_ok) return nullptr;
 
     status = napi_set_named_property(env, exports, "readPage", fn);
+    if (status != napi_ok) return nullptr;
+
+    status = napi_create_function(env, nullptr, 0, readFirstNDEFTextRecord, nullptr, &fn);
+    if (status != napi_ok) return nullptr;
+
+    status = napi_set_named_property(env, exports, "readFirstNDEFTextRecord", fn);
     if (status != napi_ok) return nullptr;
 
     status = napi_create_function(env, nullptr, 0, checkForTag, nullptr, &fn);

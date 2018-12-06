@@ -345,7 +345,7 @@ char PcdRead(uint8_t addr,uint8_t *p )
         // calculate CRC
 		CalulateCRC(ucComMF522Buf,16,CRC_buff);     // 16 bytes should used for CRC check
 		
-//  printf("debug %02x%02x %02x%02x   ",ucComMF522Buf[16],ucComMF522Buf[17],CRC_buff[0],CRC_buff[1]);
+  //printf("debug actual: %02x%02x calculated: %02x%02x   ",ucComMF522Buf[16],ucComMF522Buf[17],CRC_buff[0],CRC_buff[1]);
         
         // check CRC is correct
         if ((CRC_buff[0]!=ucComMF522Buf[16])||(CRC_buff[1]!=ucComMF522Buf[17])) 
@@ -502,11 +502,11 @@ void CalulateCRC(uint8_t *pIn ,uint8_t   len,uint8_t *pOut )
 {
     uint8_t   i,n;
    
-    // clear the calcCRC is active and all data is processed bit 
-    ClearBitMask(DivIrqReg,0x04);
-    
     // cancel any other command that might be pending/executed
     WriteRawRC(CommandReg,PCD_IDLE);
+    
+    // clear the calcCRC is active and all data is processed bit 
+    ClearBitMask(DivIrqReg,0x04);
     
     // flush read/write pointers and ERRORreg BufferOvfl bit
     SetBitMask(FIFOLevelReg,0x80);
@@ -527,10 +527,12 @@ void CalulateCRC(uint8_t *pIn ,uint8_t   len,uint8_t *pOut )
         i--;
     }
     while ((i!=0) && !(n&0x04));
-    
+
     // read the calucated CRC value (no check on timeout, CRC is wrong anyway)
+    usleep(100); // Pause briefly. Found we get lots of CRC failures otherwise as the L byte would be wrong
     pOut [0] = ReadRawRC(CRCResultRegL);
     pOut [1] = ReadRawRC(CRCResultRegM);
+
 }
 
 /* perform a soft-reset and set the correct values */

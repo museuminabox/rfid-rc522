@@ -66,6 +66,7 @@ void p_printf (int level, char *format, ...);
 #define PICC_AUTHENT1B        0x61      // authentication with keyb
 #define PICC_READ             0x30		// read 16 byte datablock
 #define PICC_WRITE            0xA0		// write 16 byte datablock
+#define PICC_UL_WRITE         0xA2		// write 4 byte page to Ultralight class cards
 #define PICC_DECREMENT        0xC0      // decrement value block
 #define PICC_INCREMENT        0xC1      // increment value block
 #define PICC_RESTORE          0xC2      // move value block to internal data register
@@ -201,6 +202,10 @@ char PcdAuthState(unsigned char auth_mode,unsigned char addr,unsigned char *pKey
 // read and write card block
 char PcdWrite(unsigned char addr,unsigned char *pData);
 char PcdRead(unsigned char addr,unsigned char *pData);
+
+// special write for Mifare Ultralight class of cards (inc. NTAG2xx)
+// Writes a single page - 4 bytes
+char PcdWritePage(unsigned char addr,unsigned char *pData);
 
 // put current card on hold
 char PcdHalt(void);

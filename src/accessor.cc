@@ -1,5 +1,4 @@
 #include <node_api.h>
-//#include <v8.h>
 #include <unistd.h>
 #include "rfid.h"
 #include "rc522.h"
@@ -38,73 +37,6 @@ char rfidChipSerialNumber[23];
 char rfidChipSerialNumberRecentlyDetected[23];
 char *p;
 int loopCounter;
-
-#if 0
-using namespace v8;
-
-void RunCallback(const FunctionCallbackInfo<Value>& args) {
-    Isolate* isolate = Isolate::GetCurrent();
-    HandleScope scope(isolate);
-
-    Local<Function> callback = Local<Function>::Cast(args[0]);
-    const unsigned argc = 1;
-
-    InitRc522();
-
-    for (;;) {
-        statusRfidReader = find_tag(&CType);
-        if (statusRfidReader == TAG_NOTAG) {
-
-            // The status that no tag is found is sometimes set even when a tag is within reach of the tag reader
-            // to prevent that the reset is performed the no tag event has to take place multiple times (ger: entrprellen)
-            if (noTagFoundCount > 2) {
-                // Sets the content of the array 'rfidChipSerialNumberRecentlyDetected' back to zero
-                memset(&rfidChipSerialNumberRecentlyDetected[0], 0, sizeof (rfidChipSerialNumberRecentlyDetected));
-                noTagFoundCount = 0;
-            } else {
-                noTagFoundCount++;
-            }
-
-            usleep(200000);
-            continue;
-        } else if (statusRfidReader != TAG_OK && statusRfidReader != TAG_COLLISION) {
-            continue;
-        }
-
-        if (select_tag_sn(serialNumber, &serialNumberLength) != TAG_OK) {
-            continue;
-        }
-
-        // Is a successful detected, the counter will be set to zero
-        noTagFoundCount = 0;
-
-        p = rfidChipSerialNumber;
-        for (loopCounter = 0; loopCounter < serialNumberLength; loopCounter++) {
-            sprintf(p, "%02x", serialNumber[loopCounter]);
-            p += 2;
-        }
-
-        // Only when the serial number of the currently detected tag differs from the
-        // recently detected tag the callback will be executed with the serial number
-        if (strcmp(rfidChipSerialNumberRecentlyDetected, rfidChipSerialNumber) != 0) {
-            Local<Value> argv[argc] = {
-                String::NewFromUtf8(isolate, &rfidChipSerialNumber[0])
-            };
-
-            callback->Call(isolate->GetCurrentContext()->Global(), argc, argv);
-        }
-
-        // Preserves the current detected serial number, so that it can be used
-        // for future evaluations
-        strcpy(rfidChipSerialNumberRecentlyDetected, rfidChipSerialNumber);
-
-        *(p++) = 0;
-    }
-
-    bcm2835_spi_end();
-    bcm2835_close();
-}
-#endif
 
 napi_value checkForTag(napi_env env, napi_callback_info args) {
     char statusRfidReader = TAG_NOTAG;
@@ -164,7 +96,6 @@ napi_value checkForTag(napi_env env, napi_callback_info args) {
         return nullptr;
     } else {
         // Some sort of error
-	    // FIXME We should return the error code really
         err = napi_create_int32(env, statusRfidReader, &ret);
         if (err != napi_ok) {
             // Couldn't create return value...
@@ -312,7 +243,7 @@ napi_value readFirstNDEFTextRecord(napi_env env, napi_callback_info args) {
                         idx += typeLength; // skip over the type
                         // skip the language
                         int langLength = gContentsBuffer[idx++];
-                        payloadLength -= langLength;
+                        payloadLength -= (langLength+1); // +1 for the langLength byte itself
                         idx += langLength;
                         // Now we're ready to return it to the caller
                         status = napi_create_int32(env, 0, &ret_argv[0]);
@@ -410,8 +341,13 @@ napi_value readFirstNDEFTextRecord(napi_env env, napi_callback_info args) {
 
 
 napi_value readPage(napi_env env, napi_callback_info args) {
+    // To store passed in arguments
     size_t arg_count = 2;
     napi_value argv[2];
+    // To store the returned arguments
+    napi_value ret_argv[2];
+    size_t ret_argc = 2;
+    void* ret_data;
     napi_value thisArg = NULL;
     void* data = NULL;
     napi_status status = napi_ok;
@@ -453,8 +389,7 @@ napi_value readPage(napi_env env, napi_callback_info args) {
     printf("Reading page %d\n", pageNumber);
     char err = TAG_ERR;
     int tries = 0;
-    // FIXME We try this up to 8 times to try to make it more reliable, but
-    // FIXME it doesn't seem to make much difference, still fails with err == 3 too often
+    // FIXME We try this up to 8 times, but probably don't need to now we've fixed the CRC checking
     while (tries++ < 8 && err != TAG_OK) {
         printf(".");
         err = PcdRead(pageNumber, buf);
@@ -462,34 +397,39 @@ napi_value readPage(napi_env env, napi_callback_info args) {
             usleep(200000);
         }
     }
+#if DEBUG
     printf("err: %d\n", err);
     for (int i =0; i < 16; i++) {
         printf("%02x ", buf[i]);
     }
     printf("\n");
+#endif
 
-    napi_value ret;
-    void* ret_data;
     if (err == TAG_OK) {
         // We've got valid data, return the first 4 bytes
-        status = napi_create_buffer_copy(env, 4, buf, &ret_data, &ret);
+        status = napi_create_buffer_copy(env, 4, buf, &ret_data, &ret_argv[1]);
         if (status != napi_ok) {
             // Couldn't create return value...
             napi_throw_error(env, "General error", "Failed to create return buffer");
             return nullptr;
         }
     } else {
-        // Return the error
-        status = napi_create_int32(env, err, &ret);
+        status = napi_get_undefined(env, &ret_argv[1]);
         if (status != napi_ok) {
             // Couldn't create return value...
-            napi_throw_error(env, "General error", "Failed to create return value");
+            napi_throw_error(env, "General error", "Failed to create undefined return value");
             return nullptr;
         }
     }
 
-    napi_value* ret_argv = &ret;
-    size_t ret_argc = 1;
+    // First parameter is the error
+    status = napi_create_int32(env, err, &ret_argv[0]);
+    if (status != napi_ok) {
+        // Couldn't create return value...
+        napi_throw_error(env, "General error", "Failed to create return value");
+        return nullptr;
+    }
+
     napi_value callback_ret;
     status = napi_call_function(env, thisArg, argv[1], ret_argc, ret_argv, &callback_ret);
     if (status != napi_ok) {
@@ -501,11 +441,105 @@ napi_value readPage(napi_env env, napi_callback_info args) {
     return nullptr;
 }
 
+// Expects 3 arguments passed in: page, data, callback
+// Callback function should expect a single error parameter
+napi_value writePage(napi_env env, napi_callback_info args) {
+    size_t arg_count = 3;
+    napi_value argv[3];
+    napi_value thisArg = NULL;
+    void* data = NULL;
+    napi_status status = napi_ok;
+
+    // Get the arguments info from the caller
+    status = napi_get_cb_info(env, args, &arg_count, argv, &thisArg, &data);
+    if (status != napi_ok) {
+        // Couldn't get info...
+        napi_throw_error(env, "General error", "Failed to retrieve NAPI arguments");
+        return nullptr;
+    }
+
+    // Check the number of arguments passed.
+    if (arg_count != 3) {
+        // Throw an Error that is passed back to JavaScript
+        napi_throw_type_error(env, "Invalid", "Wrong number of arguments");
+        return nullptr;
+    }
+
+    // Check the argument types
+    // FIXME We should use napi_typeof to check this and argv[1]
+#if 0
+    if (!argv[0]->IsNumber()) {
+        napi_throw_type_error(env, "Number expected", "Wrong arguments");
+        return nullptr;
+    }
+#endif
+
+    // Which page are we writing?
+    int32_t pageNumber;
+    status = napi_get_value_int32(env, argv[0], &pageNumber);
+    if (status != napi_ok) {
+        napi_throw_error(env, "General error", "Failed to read page number");
+        return nullptr;
+    }
+
+    // Get the data we need to write
+    uint8_t buf[4];
+    uint8_t* node_buf;
+    size_t node_buf_len;
+    status = napi_get_buffer_info(env, argv[1], (void**)&node_buf, &node_buf_len);
+    if (status != napi_ok) {
+        // Couldn't create return value...
+        napi_throw_error(env, "General error", "Failed to retrieve buffer contents");
+        return nullptr;
+    }
+    // Copy the data into our buffer
+    memcpy(buf, node_buf, MIN(4, node_buf_len));
+
+    // Write it
+#if DEBUG
+    printf("Writing page %d\n", pageNumber);
+    printf("[ %02x %02x %02x %02x ]\n", buf[0], buf[1], buf[2], buf[3]);
+#endif
+    char err = PcdWritePage(pageNumber, buf);
+#if DEBUG
+    printf("err: %d\n", err);
+#endif
+
+    napi_value ret;
+    void* ret_data;
+    status = napi_create_int32(env, err, &ret);
+    if (status != napi_ok) {
+        // Couldn't create return value...
+        napi_throw_error(env, "General error", "Failed to create return value");
+        return nullptr;
+    }
+
+    napi_value* ret_argv = &ret;
+    size_t ret_argc = 1;
+    napi_value callback_ret;
+    status = napi_call_function(env, thisArg, argv[2], ret_argc, ret_argv, &callback_ret);
+    if (status != napi_ok) {
+        // Couldn't call the callback
+	char errstr[40];
+        sprintf(errstr, "Failed to call callback: %d", status);
+        napi_throw_error(env, "General error", errstr);
+        return nullptr;
+    }
+
+    return nullptr;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
     napi_status status;
     napi_value fn;
 
     initRfidReader();
+
+    status = napi_create_function(env, nullptr, 0, writePage, nullptr, &fn);
+    if (status != napi_ok) return nullptr;
+
+    status = napi_set_named_property(env, exports, "writePage", fn);
+    if (status != napi_ok) return nullptr;
 
     status = napi_create_function(env, nullptr, 0, readPage, nullptr, &fn);
     if (status != napi_ok) return nullptr;

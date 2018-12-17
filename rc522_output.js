@@ -1,4 +1,5 @@
 var rc522 = require('./build/Release/rfid_rc522');
+var bufferTools = require('buffertools');
 
 // Initialise the reader
 var gCurrentTag = undefined;
@@ -18,29 +19,34 @@ function checkForTag() {
 
 // Set up our message handling
 process.on('message', function(msg, data) {
-	console.log("c.l: {topic: "+msg.topic+", id: "+msg.id+", payload: "+msg.payload+"}");
+    // Buffer payloads are passed across using bufferTools.toHex and .fromHex to hex
+    // encode all buffer payloads as strings
+	//console.log("c.l: {topic: "+msg.topic+", id: "+msg.id+", firstArg: "+msg.firstArg+", secondArg: "+msg.secondArg+"}");
 	if (msg.topic === 'readPage') {
-		rc522.readPage(msg.payload, function(retVal) {
-		console.log("c-addon ret: "+retVal);
-		process.send({ topic: "readPage", id: msg.id, error: 0, payload: "AMc"}); });
+		rc522.readPage(msg.firstArg, function(error, retVal) {
+        if (error == 0) {
+            // Convert the returned data to a hex string
+            retVal = bufferTools.toHex(retVal);
+        }
+		process.send({ topic: "readPage", id: msg.id, firstArg: error, secondArg: retVal}); });
 	} else if (msg.topic === 'readFirstNDEFTextRecord') {
         rc522.readFirstNDEFTextRecord(function(error, data) {
-            console.log("rfntr - "+error+","+data);
-            process.send({ topic: "readFirstNDEFTextRecord", id: msg.id, error: error, payload: data });
+            if (error == 0) {
+                process.send({ topic: "readFirstNDEFTextRecord", id: msg.id, firstArg: 0, secondArg: bufferTools.toHex(data) });
+            } else {
+                process.send({ topic: "readFirstNDEFTextRecord", id: msg.id, firstArg: error, secondArg: data });
+            }
+        });
+    } else if (msg.topic === 'writePage') {
+        // Second arg will be a hex-encoded string, convert it back to a buffer
+        var argBuf = new Buffer(msg.secondArg);
+        var data = bufferTools.fromHex(argBuf);
+		rc522.writePage(msg.firstArg, data, function(retVal) {
+		    process.send({ topic: "writePage", id: msg.id, firstArg: retVal, secondArg: undefined}); 
         });
     }
 });
 
 // Now start monitoring 
 setInterval(checkForTag, 20);
-
-
-
-//info = "asdf";
-//process.send('pageRead');
-
-//rc522(function(rfidTagSerialNumber) {
-	//console.log(rfidTagSerialNumber);
-	//process.send({ topic: "tagPresent", payload: rfidTagSerialNumber});
-//});
 

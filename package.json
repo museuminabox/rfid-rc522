@@ -24,7 +24,9 @@
   "engines": {
     "node": "0.12.9"
   },
-  "dependencies": {},
+  "dependencies": {
+    "buffertools": "^2.1.6"
+  },
   "optionalDependencies": {},
   "bugs": {
     "url": "https://github.com/museuminabox/rfid-rc522/issues"

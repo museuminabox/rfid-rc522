@@ -395,6 +395,23 @@ char PcdWrite(uint8_t   addr, uint8_t *p )
 
     return(status);
 }
+/* write page (4 bytes) to specific address, for Mifare Ultralight tags */
+char PcdWritePage(uint8_t   addr, uint8_t *p )
+{
+    char   status;
+    uint8_t   unLen;
+    uint8_t   ucComMF522Buf[MAXRLEN];
+
+    ucComMF522Buf[0] = PICC_UL_WRITE;       // a2
+    ucComMF522Buf[1] = addr;                // add addr + CRC
+    memcpy(&ucComMF522Buf[2], p, 4);
+    CalulateCRC(ucComMF522Buf,6,&ucComMF522Buf[6]);
+
+    status = PcdComMF522(PCD_TRANSCEIVE,ucComMF522Buf,8,ucComMF522Buf,&unLen,1);
+
+    return(status);
+}
+
 
 /* halt or haltA /deselect the current using the selected card
  * 0x50 00 CRC-A

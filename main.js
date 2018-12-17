@@ -1,4 +1,5 @@
 var cp = require('child_process');
+var bufferTools = require('buffertools');
 var fs = require('fs');
 var registeredCallback = null;
 var child = null;
@@ -13,9 +14,8 @@ var nextRequestID = 1;
 f = fs.openSync('/dev/mem', 'r');
 fs.closeSync(f);
 // Check done.
-console.log("t.oR: "+this.outstandingRequests);
 
-// Spawn the 
+// Spawn the process to check for tags
 child = cp.fork(__dirname + "/" + "rc522_output.js");
 
 child.on('message', function(msg) {
@@ -25,17 +25,22 @@ child.on('message', function(msg) {
         }
     } else {
         // See if we've got a queued request to match this
-        console.log("Received message: {topic: "+msg.topic+", id: "+msg.id+", payload: "+msg.payload+"}");
-        console.log("t.oR[msg.id]: {topic: "+outstandingRequests[msg.id].topic+", "+outstandingRequests[msg.id].callback+"}");
+        //console.log("Received message: {topic: "+msg.topic+", id: "+msg.id+", firstArg: "+msg.firstArg+", secondArg: "+msg.secondArg+"}");
+        // If the second argument is a string, then it's really a hex-encoded buffer.
+        // Convert it back
+        if (typeof(msg.secondArg) === 'string') {
+            var tmpBuf = new Buffer(msg.secondArg);
+            msg.secondArg = bufferTools.fromHex(tmpBuf);
+        }
         if (outstandingRequests[msg.id] != undefined) {
-            console.log(outstandingRequests[msg.id].topic);
-            console.log(msg.topic);
+            //console.log(outstandingRequests[msg.id].topic);
+            //console.log(msg.topic);
             if (outstandingRequests[msg.id].topic === msg.topic) {
                 // The ID and topic match, so this should be good to reply
-                console.log(outstandingRequests[msg.id].callback);
-                console.log(typeof outstandingRequests[msg.id].callback);
-                outstandingRequests[msg.id].callback(msg.error, msg.payload);
-                console.log("callback called");
+                //console.log(outstandingRequests[msg.id].callback);
+                //console.log(typeof outstandingRequests[msg.id].callback);
+                outstandingRequests[msg.id].callback(msg.firstArg, msg.secondArg);
+                //console.log("callback called");
                 delete outstandingRequests[msg.id]
             } else {
                 console.log("ERROR: topic doesn't match stored request - "+outstandingRequests[msg.id]);
@@ -57,10 +62,10 @@ child.on('close', function(code) {
 });
 
 // Internal function to manage comms to the child process
-function sendMessage(aTopic, aPayload, aCallback) {
+function sendMessage(aTopic, aFirstArg, aSecondArg, aCallback) {
     // Make a note of who asked for this
     outstandingRequests[nextRequestID] = { topic: aTopic, callback: aCallback };
-    child.send({ topic: aTopic, id: nextRequestID, payload: aPayload });
+    child.send({ topic: aTopic, id: nextRequestID, firstArg: aFirstArg, secondArg: aSecondArg });
     // We've used this ID now...
     nextRequestID = nextRequestID + 1;
 }
@@ -73,13 +78,39 @@ function registerTagCallback(aCallback) {
 }
 
 function readPage(aPage, aCallback) {
-    console.log(aCallback);
-    console.log(typeof aCallback);
-    sendMessage("readPage", aPage, aCallback);
+    sendMessage("readPage", aPage, undefined, aCallback);
+}
+
+async function readPageAsync(aPage) {
+    return new Promise(function(resolve, reject) {
+        readPage(aPage, function(err, data) {
+            if (err != 0) {
+                reject(err);
+            } else {
+                resolve(data);
+            }
+        });
+    });
 }
 
 function readFirstNDEFTextRecord(aCallback) {
-    sendMessage("readFirstNDEFTextRecord", 0, aCallback);
+    sendMessage("readFirstNDEFTextRecord", undefined, undefined, aCallback);
+}
+
+function writePage(aPage, aData, aCallback) {
+    sendMessage("writePage", aPage, bufferTools.toHex(aData), aCallback);
+}
+
+async function writePageAsync(aPage, aData) {
+    return new Promise(function(resolve, reject) {
+        writePage(aPage, aData, function(err) {
+            if (err != 0) {
+                reject(err);
+            } else {
+                resolve(true);
+            }
+        });
+    });
 }
 
 //
@@ -117,6 +148,9 @@ process.once("uncaughtException", function (error) {
 
 module.exports = exports = {
     readPage: readPage,
+    readPageAsync: readPageAsync,
     registerTagCallback: registerTagCallback,
+    writePage: writePage,
+    writePageAsync: writePageAsync,
     readFirstNDEFTextRecord: readFirstNDEFTextRecord
 }

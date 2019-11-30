@@ -97,6 +97,18 @@ function readFirstNDEFTextRecord(aCallback) {
     sendMessage("readFirstNDEFTextRecord", undefined, undefined, aCallback);
 }
 
+async function readFirstNDEFTextRecordAsync() {
+    return new Promise(function(resolve, reject) {
+        readFirstNDEFTextRecord(function(err, data) {
+            if (err != 0) {
+                reject(err);
+            } else {
+                resolve(data);
+            }
+        });
+    });
+}
+
 function writePage(aPage, aData, aCallback) {
     sendMessage("writePage", aPage, bufferTools.toHex(aData), aCallback);
 }
@@ -152,5 +164,6 @@ module.exports = exports = {
     registerTagCallback: registerTagCallback,
     writePage: writePage,
     writePageAsync: writePageAsync,
-    readFirstNDEFTextRecord: readFirstNDEFTextRecord
+    readFirstNDEFTextRecord: readFirstNDEFTextRecord,
+    readFirstNDEFTextRecordAsync: readFirstNDEFTextRecordAsync
 }
